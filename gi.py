@@ -1,132 +1,162 @@
-from PIL import Image
 import math
-import numpy as np
-import ray as r
+import time
 import random
+import numpy as np
+from PIL import Image
+import ray as r
 import sdf
 import bilinearInterpolate as bli
 
+# ---------- 辅助函数 ----------
+def rayp(ra, t):
+    return ra.o + t * ra.d
 
-def rayp(ra,t):
-    return ra.o+t*ra.d
+def addlist(a, b):
+    return [a[i] + b[i] for i in range(len(a))]
 
-def addlist(a,b):
-    result = []
-    for i in range(len(a)):
-        result.append(a[i] + b[i])
-    return result
+def re(a, b):
+    return np.array([int(a[0] * b[0] / 255),
+                     int(a[1] * b[1] / 255),
+                     int(a[2] * b[2] / 255), 255])
 
-def re(a,b):
-    return list([a[0] * b[0] / 255, a[1] * b[1] / 255, a[2] * b[2] / 255])
+def normal_at(sdf, x, y, epsilon=1e-4):
+    """返回 (x,y) 处的单位法线（指向外部）"""
+    dx = (bli.bilinear_interpolate(sdf, x + epsilon, y) -
+          bli.bilinear_interpolate(sdf, x - epsilon, y))
+    dy = (bli.bilinear_interpolate(sdf, x, y + epsilon) -
+          bli.bilinear_interpolate(sdf, x, y - epsilon))
+    grad = np.array([dx, dy])
+    norm = np.linalg.norm(grad)
+    if norm == 0:
+        return np.array([0, 0])
+    return grad / norm
 
+def find_surface(ra, t_out, t_in, SDF, max_iter=100, tol=1e-7):
+    """在 t_out (外部) 和 t_in (内部) 之间二分查找表面点"""
+    for _ in range(max_iter):
+        t_mid = (t_out + t_in) * 0.5
+        pos_mid = rayp(ra, t_mid)
+        d = bli.bilinear_interpolate(SDF, pos_mid[0], pos_mid[1])
+        if abs(d) < tol or (t_in - t_out) < tol:
+            return t_mid, pos_mid
+        if d > 0:  # 在外部
+            t_out = t_mid
+        else:      # 在内部
+            t_in = t_mid
+    # 返回最后的中点
+    t_mid = (t_out + t_in) * 0.5
+    return t_mid, rayp(ra, t_mid)
 
+def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size):
+    """递归获取光线颜色"""
+    k = 0
+    if recuDep > Bounce:
+        return (0, 0, 0, 0)
 
+    if bli.bilinear_interpolate(SDF, ra.o[0], ra.o[1]) <= 0.0001:
+        pixel = IMG.getpixel(ra.o)
+        if pixel[3] != 255:
+            return pixel
+        else:
+            return (0, 0, 0, 0)
+    oldk=0
+    while True:
+        pos = rayp(ra, k)
+        ix, iy = round(pos[0]), round(pos[1])
+        if ix < 0 or ix >= size[0] or iy < 0 or iy >= size[1]:
+            return (0, 0, 0, 0)
 
+        if bli.bilinear_interpolate(SDF, pos[0], pos[1]) <= 0.0001:
+            #return (255,255,255,255)
+            pixel = IMG.getpixel((ix, iy))
+            #if pixel[3] != 255:
+            #    return pixel
+            if pixel[3] != 255:  # 光源
+                return pixel
+            #i = k
+            #while bli.bilinear_interpolate(SDF, pos[0], pos[1]) <= 0.0001:
+            #    pos = rayp(ra, i)
+            #    i -= 0.001
+            #n = normal_at(SDF, round(pos[0]), round(pos[1]))
+            t_surf, pos_surf = find_surface(ra, oldk, k, SDF)
+            #pixel = IMG.getpixel((math.ceil(pos_surf[0]), math.ceil(pos_surf[1])))
 
+            n = normal_at(SDF, pos_surf[0], pos_surf[1])
+            #print(bli.bilinear_interpolate(SDF, pos_surf[0], pos_surf[1]))
+            if np.dot(ra.d, n) > 0:
+                n = -n
+            reflect_dir = ra.d - 2 * np.dot(ra.d, n) * n
+            new_ray = r.ray(pos, reflect_dir)
+            return getColorAtSDF(IMG, SDF, new_ray, recuDep + 1, Bounce, size)
+        oldk = k
+        k += max(bli.bilinear_interpolate(SDF, pos[0], pos[1]),0)
 
+    return (0, 0, 0, 0)
 
+# ---------- 渲染函数（参数外部传入）----------
+def render(img_path, color_path, output_path, Sample, Bounce):
+    # 加载输入图像
+    img = Image.open(img_path)
+    cimg = Image.open(color_path)
+    size = np.array(img.size)
 
+    # 生成 alpha 通道掩码（行优先）
+    blackAndWhite = [
+        [img.getpixel((x, y))[3] > 0 for x in range(size[0])]
+        for y in range(size[1])
+    ]
 
-img = Image.open("精灵-0001.png")
-size=np.array(img.size)
-img2= Image.new("RGB",(size[0],size[1]),(9,10,20))
-jd = 90
-jd = jd * math.pi / 180
-pos=np.array([0,0])
-r1=r.ray(np.array([0,0]),np.array([math.sin(jd),math.cos(jd)]))
-Sample=10
+    # 计算有符号距离场
+    dst = sdf.sdf_2d(blackAndWhite)
+    dst = np.array(dst)
 
-blackAndWhite=[]
-print(size[0])
-for i in range(size[0]):
-    #print(i)
-    blackAndWhite.append([])
-    for j in range(size[1]):
-        #print(j)
-        blackAndWhite[i].append(img.getpixel((i,j))==(120,120,120) or img.getpixel((i,j))==(128,128,249) or img.getpixel((i,j))==(255,255,255))
-print(blackAndWhite)
-#bool_array = np.array(blackAndWhite, dtype=bool)
-#img_array = bool_array.astype(np.uint8) * 255
-#image = Image.fromarray(img_array, mode='L')
-#image.save('black_white.png')
-dst=sdf.sdf_2d(blackAndWhite)
-dst=np.array(dst)
+    # 可选：保存距离场可视化（调试用）
+    dist_np = np.array(dst, dtype=np.float32)
+    dist_np = (dist_np / dist_np.max()) * 255
+    sdf_img = Image.fromarray(dist_np.astype(np.uint8), mode='L')
+    sdf_img.save('output/distance_field.png')
 
-#
-dist_np = np.array(dst, dtype=np.float32)
-dist_np = (dist_np / dist_np.max()) * 255
-sdf1 = Image.fromarray(dist_np.astype(np.uint8), mode='L')
-sdf1.save('output/distance_field.png')
-#print(size[0])
-# 将数组转换为图像对象
-#image = Image.fromarray(dst, mode='L')  # 'L' 表示灰度图
+    # 输出画布
+    img2 = Image.new("RGBA", (size[0], size[1]), (9, 10, 20))
 
-# 保存图像
-#image.save('output.png')
+    current_time2 = 0
+    for i in range(size[0]):
+        if i != 0:
+            progress = i / size[0] * 100
 
+            remain = (current_time2 / i) * (size[0] - i)
+            bar = '#' * round(progress) + ' ' * round(100-progress)
+            print(f'[{bar}] {progress:.1f}% remain time: {remain:.2f}s')
 
-for i in range(size[0]):
-    #print(i)
-    print(i)
-    for j in range(size[1]):
-        #k=0
-        nowcolor = [0, 0, 0]
-        #print(img.getpixel((i,j)))
-        for sp in range(Sample):
-            #print(pos[0])
-            jd=random.randint(1, 360)
-            jd=jd*math.pi/180
-            r1.o=np.array([i,j])
-            r1.d=np.array([math.sin(jd),math.cos(jd)])
-            k=0
+        current_time = time.time()
+        for j in range(size[1]):
+            nowcolor = [0, 0, 0, 0]
+            for sp in range(Sample):
+                #sector = 2 * math.pi * (sp + random.random()) / Sample
+                #direction = np.array([math.sin(sector), math.cos(sector)])
+                jd=random.uniform(1,360)
+                jd=jd*math.pi/180
+                direction = np.array([math.sin(jd), math.cos(jd)])
+                r1 = r.ray(np.array([i, j]), direction)
+                col = np.array(getColorAtSDF(img, dst, r1, 0, Bounce, size))
+                if col[3] != 255:
+                    color = re(cimg.getpixel((i, j)), col)
+                    nowcolor = addlist(nowcolor, color)
+            for k in range(len(nowcolor)):
+                nowcolor[k] = int(nowcolor[k] / Sample)
+            img2.putpixel((i, j), tuple(nowcolor))
+        current_time2 += time.time() - current_time
 
-            while True:
-                #k=dst[i][j]
+    # 保存最终结果
+    img2.save(output_path)
 
+# ---------- 全局配置（在函数外定义）----------
+input_image = "精灵-0001.png"
+color_image = "img.png"
 
-                #pos = np.array([int(pos[0]),int(pos[1])])
+sample_count = 1
 
-                pos = rayp(r1, k)
-                #print(pos)
-                if pos[0] < 0 or pos[0] >= size[0] or pos[1] < 0 or pos[1] >= size[1]:
-
-                    #nowcolor = addlist(nowcolor, img.getpixel((i,j)))
-
-
-                    break
-
-                if bli.bilinear_interpolate(dst,pos[1],pos[0]) <= 0.1:
-
-                    if img.getpixel(np.round(pos))==(128,128,249):
-                        color=re(img.getpixel((i,j)),[128,128,249])
-                        nowcolor=addlist(nowcolor,color)
-                        break
-                    if img.getpixel(np.round(pos))==(255,255,255):
-                        color = re(img.getpixel((i, j)), [255,255,255])
-                        nowcolor=addlist(nowcolor,color)
-                        #print(color)
-                        break
-                    if img.getpixel(np.round(pos))==(120,120,120):
-                        #color = re(img.getpixel((i, j)), [255, 255, 255])
-                        #nowcolor = addlist(nowcolor, color)
-                        #print(1)
-                        break
-                    break
-
-
-                k += bli.bilinear_interpolate(dst,pos[1],pos[0])
-                #print(bli.bilinear_interpolate(dst,pos[1],pos[0]))
-                #if dst[int(pos[1])][int(pos[0])]-1<=0:
-                    #break
-
-                #print(dst[int(pos[1])][int(pos[0])])
-                #if dst[int(pos[1])][int(pos[0])]==0:
-                #    break
-
-        for k in range(len(nowcolor)):
-            nowcolor[k]=int(nowcolor[k]/Sample)
-
-        img2.putpixel((i,j),tuple(nowcolor))
-
-img2.save(f"output/output {Sample} Sample.png")
-#nowcolor=addlist(nowcolor,[128,128,249,255])
+bounce_count = 5
+output_file = f"output/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s).png"
+# 调用渲染函数
+render(input_image, color_image, output_file, sample_count, bounce_count)
