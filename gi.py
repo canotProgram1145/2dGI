@@ -203,7 +203,7 @@ def render(img_path, color_path, output_path, Sample, Bounce):
                     #jd=random.uniform(1,360)
                     #jd=jd*math.pi/180
                     #direction = np.array([math.sin(jd), math.cos(jd)])
-                    r1 = r.ray(np.array([i, j]), direction)
+                    r1 = r.ray(np.array([i+random.random()-0.5, j+random.random()-0.5]), direction)
                     col = np.array(getColorAtSDF(img, dst, r1, 0, Bounce, size))
                 else:
                     col=(tcol[0],tcol[1],tcol[2],255)
@@ -225,9 +225,9 @@ def render(img_path, color_path, output_path, Sample, Bounce):
 input_image = "精灵-0001.png"
 color_image = "img.png"
 
-sample_count = 3
+sample_count = 15
 
-bounce_count = 1
+bounce_count = 5
 output_file = f"output/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s).png"
 # 调用渲染函数
 render(input_image, color_image, output_file, sample_count, bounce_count)
