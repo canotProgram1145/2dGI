@@ -3,9 +3,17 @@ import time
 import random
 import numpy as np
 from PIL import Image
+#from numba.core.typing.builtins import Print
+
+
 import ray as r
 import sdf
 import bilinearInterpolate as bli
+import time
+#import numba
+
+random.seed(time.time())
+
 
 # ---------- 辅助函数 ----------
 def rayp(ra, t):
@@ -96,14 +104,15 @@ def sample_reflection_angle(roughness, normal_angle, incident_angle):
     else:
         return specular_angle
 
-def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size):
+
+def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
     """递归获取光线颜色"""
     k = 0
     if recuDep > Bounce:
         return (0, 0, 0, 0)
 
     #if bli.bilinear_interpolate(SDF, ra.o[0], ra.o[1]) <= 0.0001:
-    pixel = IMG.getpixel((round(ra.o[0]),round(ra.o[1])))
+    #pixel = IMG.getpixel((round(ra.o[0]),round(ra.o[1])))
         #print(pixel[3])
 
 
@@ -126,11 +135,13 @@ def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size):
                 return (0, 0, 0, 0)
             pixel = IMG.getpixel((ix, iy))
 
-            # print(pixel[3])
+            #print(pixel)
             #if pixel[3] != 255:
             #    return pixel
-            if pixel[3] != 255:  # 光源
-                return pixel
+            if pixel[3] != 255 and pixel[3]!=0:  # 光源
+                #print(pixel)
+                return re(pixel,nowcolor)
+
             #i = k
             #while bli.bilinear_interpolate(SDF, pos[0], pos[1]) <= 0.0001:
             #    pos = rayp(ra, i)
@@ -150,7 +161,15 @@ def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size):
             #print(bli.bilinear_interpolate(SDF, new_origin[0], new_origin[1]))
             new_ray = r.ray(new_origin, direction)
 
-            return re(getColorAtSDF(IMG, SDF, new_ray, recuDep + 1, Bounce, size),pixel)
+            nc=re(pixel,nowcolor)
+            #print(nc)
+
+            if nc[0]<=1:
+                if nc[1] < 1:
+                    if nc[2] < 1:
+                        return (0,0,0,0)
+            result = getColorAtSDF(IMG, SDF, new_ray, recuDep + 1, Bounce, size, nc)
+            return result
         oldk = k
         k += max(bli.bilinear_interpolate(SDF, pos[0], pos[1]),0)
 
@@ -187,47 +206,54 @@ def render(img_path, color_path, output_path, Sample, Bounce):
         if i != 0:
             progress = i / size[0] * 100
 
-            remain = (current_time2 / i) * (size[0] - i)
+            remain = (current_time2) * (size[0] - i)
             bar = '#' * round(progress) + ' ' * round(100-progress)
             print(f'[{bar}] {progress:.1f}% remain time: {remain:.2f}s')
 
         current_time = time.time()
         for j in range(size[1]):
             nowcolor = [0, 0, 0, 0]
+
+            if img.getpixel((i, j))[3]==255:
+                img2.putpixel((i,j),(0,0,0,255))
+                continue
+            elif img.getpixel((i,j))[3]!=0:
+                img2.putpixel((i,j),img.getpixel((i,j)))
+                continue
             for sp in range(Sample):
                 tcol = img.getpixel((i,j))
 
-                if tcol==(0,0,0,0):
-                    sector = 2 * math.pi * (sp + random.random()) / Sample
-                    direction = np.array([math.sin(sector), math.cos(sector)])
-                    #jd=random.uniform(1,360)
-                    #jd=jd*math.pi/180
-                    #direction = np.array([math.sin(jd), math.cos(jd)])
-                    r1 = r.ray(np.array([i+random.random()-0.5, j+random.random()-0.5]), direction)
-                    col = np.array(getColorAtSDF(img, dst, r1, 0, Bounce, size))
-                else:
-                    col=(tcol[0],tcol[1],tcol[2],255)
 
-                if img.getpixel((i, j))[3]==0:
-                    color = re(cimg.getpixel((i, j)), col)
-                    nowcolor = addlist(nowcolor, color)
-                else:
-                    nowcolor = addlist(nowcolor, col)
+                sector = 2 * math.pi * (sp + random.random()) / Sample
+                direction = np.array([math.sin(sector), math.cos(sector)])
+                #jd=random.uniform(1,360)
+                #jd=jd*math.pi/180
+                #direction = np.array([math.sin(jd), math.cos(jd)])
+                r1 = r.ray(np.array([i+random.random()-0.5, j+random.random()-0.5]), direction)
+                col = np.array(getColorAtSDF(img, dst, r1, 0, Bounce, size , (255,255,255,255)))
+
+                color = re(cimg.getpixel((i, j)), col)
+                nowcolor = addlist(nowcolor, color)
+
             for k in range(len(nowcolor)):
                 nowcolor[k] = int(nowcolor[k] / Sample)
             img2.putpixel((i, j), tuple(nowcolor))
-        current_time2 += time.time() - current_time
+        current_time2 = time.time() - current_time
 
     # 保存最终结果
     img2.save(output_path)
 
 # ---------- 全局配置（在函数外定义）----------
 input_image = "精灵-0001.png"
-color_image = "img.png"
+color_image = "ba.png"
 
-sample_count = 15
+sample_count = 1
 
-bounce_count = 5
-output_file = f"output/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s).png"
+bounce_count = 1
+output_file = f"output/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_without_linear.png"
 # 调用渲染函数
+rendertime=time.time()
+
 render(input_image, color_image, output_file, sample_count, bounce_count)
+rendertime=time.time()-rendertime
+print(rendertime)

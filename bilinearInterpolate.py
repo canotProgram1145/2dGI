@@ -1,5 +1,7 @@
 import numpy as np
+import numba
 
+@numba.jit
 def bilinear_interpolate(array, x, y, fill_value=None):
     """
     对二维网格数据进行双线性插值。

@@ -4,6 +4,9 @@ from typing import List
 import math
 import numpy as np
 from typing import List
+import numpy as np
+
+
 
 def sdf_2d(bool_array: List[List[bool]]) -> List[List[float]]:
     """
