@@ -7,11 +7,13 @@ from PIL import Image, ImageChops
 
 
 import time
-import numba
+from numba import njit, prange
 
 import math
 import random
 import numpy as np
+
+
 random.seed(time.time())
 from typing import List
 
@@ -33,7 +35,7 @@ class ray:
 
 
 
-@numba.jit
+@njit
 def bilinear_interpolate(array, x, y, fill_value=None):
     """
     对二维网格数据进行双线性插值。
@@ -222,14 +224,14 @@ def edt_1d(f: List[float]) -> List[float]:
 
 
 
-@numba.jit
+@njit
 def rayp(ra, t):
     return ra[0] + t * ra[1]
 
 def addlist(a, b):
     return [a[i] + b[i] for i in range(len(a))]
 
-@numba.jit
+@njit
 def re(a, b):
     r = int(a[0]) * int(b[0]) // 255  # 使用整数除法 // 替代 math.floor
     g = int(a[1]) * int(b[1]) // 255
@@ -237,7 +239,7 @@ def re(a, b):
     return np.array([r, g, b_, 255], dtype=np.int64)
 
 
-@numba.jit
+@njit
 def normal_at(sdf, x, y, epsilon=1e-4):
     """返回 (x,y) 处的单位法线（指向外部）"""
     dx = (bilinear_interpolate(sdf, x + epsilon, y) -
@@ -252,7 +254,7 @@ def normal_at(sdf, x, y, epsilon=1e-4):
 
 
 
-@numba.jit
+@njit
 def find_surface(ra, t_out, t_in, SDF, max_iter=100, tol=1e-7):
     """在 t_out (外部) 和 t_in (内部) 之间二分查找表面点"""
     for _ in range(max_iter):
@@ -321,7 +323,7 @@ def linear_to_srgb_rgba(img):
 
 
 
-@numba.jit
+@njit
 def sample_reflection_angle(normal_vec):
 
 
@@ -341,7 +343,7 @@ def sample_reflection_angle(normal_vec):
     return diffuse_angle
 
 
-@numba.njit
+@njit
 def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
     """递归获取光线颜色"""
     k = 0
@@ -359,6 +361,13 @@ def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
     #print(recuDep)
     #print(recuDep)
     oldk=0
+
+
+
+
+
+    a=0
+
     while True:
         pos = rayp(ra, k)
 
@@ -367,12 +376,32 @@ def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
             return np.array([0, 0, 0, 0], dtype=np.int64)
             #print(1)
         if bilinear_interpolate(SDF, pos[0], pos[1]) <= 0.00001:
+
+
             #return (255,255,255,255)
             pos = rayp(ra, k+0.01)
             ix, iy = round(pos[0]), round(pos[1])
             if ix < 0 or ix >= size[0] or iy < 0 or iy >= size[1]:
                 return np.array([0, 0, 0, 0], dtype=np.int64)
             pixel = IMG[iy][ix]
+
+            if a == 0:
+                if pixel[3]==255:
+
+                    k += max(abs(bilinear_interpolate(SDF, pos[0], pos[1])),1)
+                    if 0<pixel[3]<255:
+                        break
+                    continue
+
+                #return np.array([0, 0, 0, 255], dtype=np.int64)
+            #elif pixel[3]!=0:
+                #if a==0:
+                #    a=1
+                #    continue
+            #    if a == 0:
+            #        return np.array([pixel[0],pixel[1],pixel[2],255], dtype=np.int64)
+
+
             #print(pixel)
             # print(pixel[3])
             #if pixel[3] != 255:
@@ -413,7 +442,11 @@ def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
 
             result = getColorAtSDF(IMG, SDF, new_ray, recuDep + 1, Bounce, size, nc)
             #print(result)
+
             return result
+
+        else:
+            a=1
         oldk = k
         k += abs(bilinear_interpolate(SDF, pos[0], pos[1]))
 
@@ -522,6 +555,65 @@ def invert_by_mask(bg: Image.Image, mask: Image.Image) -> Image.Image:
 
 
 # ---------- 渲染函数（参数外部传入）----------
+
+def render_loop(img_array, cimg_array, img_out, sdf, size, samples, bounce):
+    current_time2 = 0
+    img2_array=img_out
+    for i in range(size[0]):
+        if i != 0:
+            progress = i / size[0] * 100
+
+            remain = (current_time2) * (size[0] - i)
+            bar = '#' * round(progress) + ' ' * round(100 - progress)
+            print(f'[{bar}] {progress:.1f}% remain time: {remain:.2f}s')
+
+        current_time = time.time()
+        for j in range(size[1]):
+            nowcolor = np.array([0, 0, 0, 0])
+            nowpixel = img_array[j][i]
+            b=0
+            if nowpixel[3] == 255:
+                b=1
+            #    img2_array[j][i] = (0, 0, 0, 255)
+            #    continue
+            elif nowpixel[3] != 0:
+                b=2
+            #    img2_array[j][i] = img_array[j][i]
+            #    img2_array[j][i][3] = 255
+            #    continue
+            for sp in range(samples):
+                # tcol = img.getpixel((i,j))
+
+                sector = 2 * math.pi * (sp + random.random()) / samples
+                direction = np.array([math.sin(sector), math.cos(sector)])
+                # jd=random.uniform(1,360)
+                # jd=jd*math.pi/180
+                # direction = np.array([math.sin(jd), math.cos(jd)])
+                r1 = (np.array([i + random.random() - 0.5, j + random.random() - 0.5]), direction)
+                # col = np.array(getColorAtSDF(img, dst, r1, 0, Bounce, size , (255,255,255,255)))
+                col = np.array(getColorAtSDF(img_array, sdf, r1, 0, bounce, size, (255, 255, 255, 255)))
+                # print(col)
+                #if b==0:
+
+                #    color = re(cimg_array[j][i], col)
+                #else:
+                #    color = re(img_array[j][i], col)
+                nowcolor = nowcolor + col
+
+            for k in range(len(nowcolor)):
+                nowcolor[k] = int(nowcolor[k] / samples)
+            if b==0:
+                img2_array[j][i] = re(nowcolor, cimg_array[j][i])
+            elif b==1:
+                img2_array[j][i] = re(nowcolor, img_array[j][i])
+            else:
+                img2_array[j][i] = nowcolor
+
+        current_time2 = time.time() - current_time
+    return img2_array
+
+
+
 def render(img_path, color_path, output_path, Sample, Bounce):
     # 加载输入图像
     img = Image.open(img_path)
@@ -555,7 +647,7 @@ def render(img_path, color_path, output_path, Sample, Bounce):
     dist_np = np.array(dst, dtype=np.float32)
     dist_np = (dist_np / dist_np.max()) * 255
     sdf_img = Image.fromarray(dist_np.astype(np.uint8), mode='L')
-    sdf_img.save('output/distance_field.png')
+    sdf_img.save(output_path+'_distance_field.png')
 
     # 输出画布
     img2 = Image.new("RGBA", (size[0], size[1]), (0, 00, 00))
@@ -566,48 +658,8 @@ def render(img_path, color_path, output_path, Sample, Bounce):
 
 
 
-    current_time2 = 0
-    for i in range(size[0]):
-        if i != 0:
-            progress = i / size[0] * 100
 
-            remain = (current_time2) * (size[0] - i)
-            bar = '#' * round(progress) + ' ' * round(100-progress)
-            print(f'[{bar}] {progress:.1f}% remain time: {remain:.2f}s')
-
-        current_time = time.time()
-        for j in range(size[1]):
-            nowcolor = [0, 0, 0, 0]
-            nowpixel = img_array[j][i]
-            if nowpixel[3]==255:
-                img2_array[j][i]=(0,0,0,255)
-                continue
-            elif nowpixel[3]!=0:
-                img2_array[j][i]=img_array[j][i]
-                img2_array[j][i][3]=255
-                continue
-            for sp in range(Sample):
-                #tcol = img.getpixel((i,j))
-
-
-                sector = 2 * math.pi * (sp + random.random()) / Sample
-                direction = np.array([math.sin(sector), math.cos(sector)])
-                #jd=random.uniform(1,360)
-                #jd=jd*math.pi/180
-                #direction = np.array([math.sin(jd), math.cos(jd)])
-                r1 = (np.array([i+random.random()-0.5, j+random.random()-0.5]), direction)
-                #col = np.array(getColorAtSDF(img, dst, r1, 0, Bounce, size , (255,255,255,255)))
-                col = np.array(getColorAtSDF(img_array, dst, r1, 0, Bounce, size, (255, 255, 255, 255)))
-                #print(col)
-                color = re(cimg_array[j][i], col)
-                nowcolor = addlist(nowcolor, color)
-
-            for k in range(len(nowcolor)):
-                nowcolor[k] = int(nowcolor[k] / Sample)
-
-            img2_array[j][i]=re(nowcolor,cimg_array[j][i])
-        current_time2 = time.time() - current_time
-    img2_array=linear_to_srgb_rgba(img2_array)
+    img2_array=linear_to_srgb_rgba(render_loop(img_array,cimg_array,img2_array,dst,size,Sample, Bounce))
     # 保存最终结果
     img2=Image.fromarray(img2_array)
     img2.save(output_path)
@@ -617,7 +669,7 @@ def render(img_path, color_path, output_path, Sample, Bounce):
 input_image = "精灵-0001.png"
 color_image = "ba.png"
 
-sample_count = 32
+sample_count = 30
 bounce_count = 5
 output_file = f"output3/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_aa.png"
 # 调用渲染函数

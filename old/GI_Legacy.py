@@ -1,13 +1,9 @@
-import math
-import time
 import random
-import numpy as np
 from PIL import Image
 #from numba.core.typing.builtins import Print
 
 
-import ray as r
-import sdf
+from old import sdf, ray as r
 import bilinearInterpolate as bli
 import time
 #import numba
@@ -250,7 +246,7 @@ color_image = "ba.png"
 sample_count = 1
 
 bounce_count = 1
-output_file = f"output/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_without_linear.png"
+output_file = f"old/output/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_without_linear.png"
 # 调用渲染函数
 rendertime=time.time()
 
