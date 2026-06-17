@@ -272,7 +272,7 @@ def find_surface(ra, t_out, t_in, SDF, max_iter=100, tol=1e-7):
     return t_mid, rayp(ra, t_mid)
 
 
-import numpy as np
+
 
 
 def srgb_to_linear_rgba(img):
@@ -344,7 +344,56 @@ def sample_reflection_angle(normal_vec):
 
 
 @njit
-def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
+def is_occluded_by_height(start_xy, end_xy, height_map, size):
+    """
+    使用最初的方法：沿光线投影路径采样，检查光线高度与地形高度的差值是否发生符号翻转。
+    如果发生翻转（即从高于地形变成低于地形，或反之），则判定为遮挡。
+    平坦区域因为差值始终为 0 或同号，不会被误判。
+    """
+    x0, y0 = start_xy
+    x1, y1 = end_xy
+
+    # 起点和终点的高度（双线性插值）
+    h_start = bilinear_interpolate(height_map, x0, y0)
+    h_end   = bilinear_interpolate(height_map, x1, y1)
+
+    dx = x1 - x0
+    dy = y1 - y0
+    dist = math.sqrt(dx * dx + dy * dy)
+    if dist < 1e-6:
+        return False
+
+    # 采样步数：至少每像素一个采样点
+    steps = int(math.ceil(dist)) + 1   # 包含两端点
+
+    # 初始差值（在起点处，光线高度等于起点地形高度，差值为0）
+    prev_diff = 0.0
+
+    for i in range(1, steps):          # 跳过 i=0（起点）
+        t = i / (steps - 1)
+        x = x0 + t * dx
+        y = y0 + t * dy
+        terrain_h = bilinear_interpolate(height_map, x, y)
+        ray_h = h_start + (h_end - h_start) * t
+        diff = ray_h - terrain_h
+
+        # 符号翻转 → 相交（遮挡）
+        if prev_diff * diff < 0:
+            return True
+
+        # 注意：我们不在这里用 diff == 0 判断遮挡，
+        # 否则平坦区域会全部误判为遮挡。
+        # 只有真正的符号翻转才表示光线穿过了地形表面。
+
+        prev_diff = diff
+
+    return False
+
+
+
+
+@njit
+def getColorAtSDF(IMG,HEIGHT, SDF, ra, recuDep, Bounce, size,nowcolor):
     """递归获取光线颜色"""
     k = 0
     if recuDep > Bounce:
@@ -367,6 +416,8 @@ def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
 
 
     a=0
+
+    starting_height= HEIGHT[round(ra[0][1])][round(ra[0][0])]
 
     while True:
         pos = rayp(ra, k)
@@ -406,10 +457,14 @@ def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
             # print(pixel[3])
             #if pixel[3] != 255:
             #    return pixel
+
             if pixel[3] != 255 and pixel[3]!=0:  # 光源
-                #print(pixel)
-                #print(1)
-                return re(pixel,nowcolor)
+                # ---- 高度遮挡检测 ----
+                if is_occluded_by_height(ra[0], pos, HEIGHT, size):
+                    return np.array([0, 0, 0, 0], dtype=np.int64)
+                # ---- 原逻辑 ----
+                return re(pixel, nowcolor)
+
 
             #i = k
             #while bli.bilinear_interpolate(SDF, pos[0], pos[1]) <= 0.0001:
@@ -417,6 +472,8 @@ def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
             #   i -= 0.001
             #n = normal_at(SDF, round(pos[0]), round(pos[1]))
             t_surf, pos_surf = find_surface(ra, oldk, k, SDF)
+            if is_occluded_by_height(ra[0], pos_surf, HEIGHT, size):
+                return np.array([0, 0, 0, 0], dtype=np.int64)
             #pixel = IMG.getpixel((math.ceil(pos_surf[0]), math.ceil(pos_surf[1])))
 
             n = normal_at(SDF, pos_surf[0], pos_surf[1])
@@ -427,6 +484,9 @@ def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
             out_angle = sample_reflection_angle(n)
             direction = np.array([math.cos(out_angle), math.sin(out_angle)])
             new_origin = pos_surf + direction * 1e-4  # 或沿法线偏移 n * 1e-4
+
+
+
             #print(bli.bilinear_interpolate(SDF, new_origin[0], new_origin[1]))
             new_ray = (new_origin, direction)
 
@@ -440,7 +500,7 @@ def getColorAtSDF(IMG, SDF, ra, recuDep, Bounce, size,nowcolor):
                         #print(1)
                         return np.array([0, 0, 0, 0], dtype=np.int64)
 
-            result = getColorAtSDF(IMG, SDF, new_ray, recuDep + 1, Bounce, size, nc)
+            result = getColorAtSDF(IMG, HEIGHT,SDF, new_ray, recuDep + 1, Bounce, size, nc)
             #print(result)
 
             return result
@@ -556,7 +616,7 @@ def invert_by_mask(bg: Image.Image, mask: Image.Image) -> Image.Image:
 
 # ---------- 渲染函数（参数外部传入）----------
 
-def render_loop(img_array, cimg_array, img_out, sdf, size, samples, bounce):
+def render_loop(img_array, height_array,cimg_array, img_out, sdf, size, samples, bounce):
     current_time2 = 0
     img2_array=img_out
     for i in range(size[0]):
@@ -591,7 +651,7 @@ def render_loop(img_array, cimg_array, img_out, sdf, size, samples, bounce):
                 # direction = np.array([math.sin(jd), math.cos(jd)])
                 r1 = (np.array([i + random.random() - 0.5, j + random.random() - 0.5]), direction)
                 # col = np.array(getColorAtSDF(img, dst, r1, 0, Bounce, size , (255,255,255,255)))
-                col = np.array(getColorAtSDF(img_array, sdf, r1, 0, bounce, size, (255, 255, 255, 255)))
+                col = np.array(getColorAtSDF(img_array,height_array, sdf, r1, 0, bounce, size, np.array([255, 255, 255, 255], dtype=np.int64)))
                 # print(col)
                 #if b==0:
 
@@ -614,17 +674,17 @@ def render_loop(img_array, cimg_array, img_out, sdf, size, samples, bounce):
 
 
 
-def render(img_path, color_path, output_path, Sample, Bounce):
+def render(img_path, height_path,color_path, output_path, Sample, Bounce):
     # 加载输入图像
     img = Image.open(img_path)
     cimg = Image.open(color_path)
-
+    height = Image.open(height_path)
 
     size = np.array(img.size)
     print(img.info)
     img_array = np.array(img)
     cimg_array = np.array(cimg)
-
+    height_array = np.array(height)
     img_array=srgb_to_linear_rgba(img_array)
     cimg_array = srgb_to_linear_rgba(cimg_array)
     #print(len(img_array[1]))
@@ -659,42 +719,26 @@ def render(img_path, color_path, output_path, Sample, Bounce):
 
 
 
-    img2_array=linear_to_srgb_rgba(render_loop(img_array,cimg_array,img2_array,dst,size,Sample, Bounce))
+    img2_array=linear_to_srgb_rgba(render_loop(img_array,height_array,cimg_array,img2_array,dst,size,Sample, Bounce))
     # 保存最终结果
     img2=Image.fromarray(img2_array)
     img2.save(output_path)
 
 
 # ---------- 全局配置（在函数外定义）----------
-
-
 input_image = "精灵-0001.png"
 color_image = "ba.png"
-
-sample_count = 2048
-bounce_count = 50
+height_image = "height.png"
+sample_count = 100
+bounce_count = 5
 output_file = f"output3/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_aa.png"
 # 调用渲染函数
 
 #print(linear_to_srgb_rgba(np.array([255,215,255,254])))
-
-
-#print(linear_to_srgb_rgba(np.array([255,215,255,254])))
-
-render(input_image, color_image, output_file, sample_count, bounce_count)
-
-
-input_image = "精灵-0001.png"
-color_image = "ba.png"
-
-sample_count = 4096
-bounce_count = 50
-output_file = f"output3/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_aa.png"
-# 调用渲染函数
+rendertime=time.time()
 
 #print(linear_to_srgb_rgba(np.array([255,215,255,254])))
 
-
-#print(linear_to_srgb_rgba(np.array([255,215,255,254])))
-
-render(input_image, color_image, output_file, sample_count, bounce_count)
+render(input_image,height_image,color_image, output_file, sample_count, bounce_count)
+rendertime=time.time()-rendertime
+print(rendertime)
