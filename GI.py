@@ -668,12 +668,12 @@ def render(img_path, color_path, output_path, Sample, Bounce):
 # ---------- 全局配置（在函数外定义）----------
 
 
-input_image = "精灵-0001.png"
-color_image = "ba.png"
+input_image = "input/精灵-0001.png"
+color_image = "input/精灵-0001.png"
 
-sample_count = 2048
+sample_count = 1
 bounce_count = 50
-output_file = f"output3/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_aa.png"
+output_file = f"output/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_aa.png"
 # 调用渲染函数
 
 #print(linear_to_srgb_rgba(np.array([255,215,255,254])))
@@ -684,12 +684,38 @@ output_file = f"output3/output_{sample_count}_Sample(s)_with_{bounce_count}_Boun
 render(input_image, color_image, output_file, sample_count, bounce_count)
 
 
-input_image = "精灵-0001.png"
-color_image = "ba.png"
+input_image = "input/精灵-0001.png"
+color_image = "input/background.png"
 
-sample_count = 4096
+sample_count = 1
 bounce_count = 50
-output_file = f"output3/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_aa.png"
+output_file = f"output/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_aa.png"
+# 调用渲染函数
+
+#print(linear_to_srgb_rgba(np.array([255,215,255,254])))
+
+
+#print(linear_to_srgb_rgba(np.array([255,215,255,254])))
+
+render(input_image, color_image, output_file, sample_count, bounce_count)
+
+
+sample_count = 16
+bounce_count = 50
+output_file = f"output/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_aa.png"
+# 调用渲染函数
+
+#print(linear_to_srgb_rgba(np.array([255,215,255,254])))
+
+
+#print(linear_to_srgb_rgba(np.array([255,215,255,254])))
+
+render(input_image, color_image, output_file, sample_count, bounce_count)
+
+
+sample_count = 32
+bounce_count = 50
+output_file = f"output/output_{sample_count}_Sample(s)_with_{bounce_count}_Bounce(s)_aa.png"
 # 调用渲染函数
 
 #print(linear_to_srgb_rgba(np.array([255,215,255,254])))

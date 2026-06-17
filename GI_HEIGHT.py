@@ -727,7 +727,7 @@ def render(img_path, height_path,color_path, output_path, Sample, Bounce):
 
 # ---------- 全局配置（在函数外定义）----------
 input_image = "精灵-0001.png"
-color_image = "ba.png"
+color_image = "background.png"
 height_image = "height.png"
 sample_count = 100
 bounce_count = 5
